@@ -1,0 +1,24 @@
+# Grant System Python Dependencies
+# For Python 3.10+
+
+# Web Scraping
+selenium>=4.10.0
+beautifulsoup4>=4.12.0
+requests>=2.31.0
+
+# Data Processing
+pandas>=2.0.0
+openpyxl>=3.10.0
+
+# Google Sheets Integration
+gspread>=5.10.0
+oauth2client>=4.1.3
+
+# Email Notifications
+secure-smtplib>=0.1.1
+
+# Development & Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+flake8>=6.0.0
+black>=23.0.0
