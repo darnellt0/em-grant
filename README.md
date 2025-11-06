@@ -1,19 +1,49 @@
-# Elevated Movements Python ↔ Google Sheets Bridge
+# Elevated Movements Grant Tracking System
 
-This bundle connects your Python scraper output to your Google Sheets-based Apps Script system.
+Automated federal grant opportunity discovery and tracking system that scrapes Grants.gov and syncs to Google Sheets.
+
+## Recent Improvements (2025-11-06)
+
+- ✅ Migrated from deprecated `oauth2client` to modern `google-auth` library
+- ✅ Added automatic `.env` file loading with `python-dotenv`
+- ✅ Fixed duplicate column headers in Google Sheets uploads
+- ✅ Added retry logic with exponential backoff for API rate limiting
+- ✅ Integrated optional email alerts into main workflow
+- ✅ Made worksheet name configurable via environment variables
 
 ## 1. SETUP
 
 Install Python packages:
 ```bash
-pip install pandas gspread oauth2client openpyxl
+pip install -r requirements.txt
 ```
 
-Place your `credentials.json` file in this folder.
+Create your `.env` file from the template:
+```bash
+cp .env.example .env
+# Edit .env with your actual credentials
+```
 
-## 2. PYTHON USAGE
+Place your Google Service Account credentials JSON file in this folder.
 
-From your main scraper script, call:
+## 2. USAGE
+
+### Quick Start
+
+Run the production scraper:
+```bash
+python grantsgov_scraper_prod.py
+```
+
+This will:
+1. Scrape grant opportunities from Grants.gov
+2. Save results to a timestamped Excel file
+3. Upload new grants to Google Sheets (with deduplication)
+4. Send email alerts for high-value opportunities (if configured)
+
+### Manual Bridge Upload (Legacy)
+
+You can also manually upload Excel files:
 
 ```python
 from bridge_upload import upload_grants_to_sheets

@@ -12,6 +12,7 @@ import random
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional
+from functools import wraps
 
 import requests
 from bs4 import BeautifulSoup
@@ -23,7 +24,11 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import pandas as pd
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -52,6 +57,7 @@ CONFIG = {
         float(os.getenv("SCRAPE_DELAY_MAX", 6))
     ],
     "google_sheet_name": os.getenv("GOOGLE_SHEET_NAME", "GrantWatch Grants"),
+    "google_worksheet_name": os.getenv("GOOGLE_WORKSHEET_NAME", "New_Grants_Imported"),
     "credentials_file": os.getenv("GOOGLE_CREDENTIALS_FILE", "grantsgov-integration-298b73eb28d9.json"),
     "headless": os.getenv("HEADLESS_MODE", "True").lower() == "true",
     "timeout": 30
@@ -159,21 +165,47 @@ def parse_grants(html: str) -> List[Dict]:
         return results
 
 
+# --- RETRY LOGIC ---
+def retry_with_backoff(max_retries: int = 3, initial_delay: float = 1):
+    """Decorator to retry function calls with exponential backoff on API errors."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            delay = initial_delay
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except gspread.exceptions.APIError as e:
+                    if e.response.status_code == 429 and attempt < max_retries - 1:
+                        logger.warning(f"Rate limited (attempt {attempt + 1}/{max_retries}), retrying in {delay}s...")
+                        time.sleep(delay)
+                        delay *= 2
+                    else:
+                        logger.error(f"API error after {attempt + 1} attempts: {e}")
+                        raise
+                except Exception as e:
+                    logger.error(f"Unexpected error in {func.__name__}: {e}")
+                    raise
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
 # --- GOOGLE SHEETS ---
 def authenticate_sheets() -> Optional[gspread.Client]:
-    """Authenticate with Google Sheets API."""
+    """Authenticate with Google Sheets API using google-auth."""
     try:
         if not Path(CONFIG["credentials_file"]).exists():
             logger.error(f"Credentials file not found: {CONFIG['credentials_file']}")
             return None
 
-        scope = [
+        scopes = [
             "https://spreadsheets.google.com/feeds",
             "https://www.googleapis.com/auth/drive"
         ]
-        creds = ServiceAccountCredentials.from_json_keyfile_name(
+        creds = Credentials.from_service_account_file(
             CONFIG["credentials_file"],
-            scope
+            scopes=scopes
         )
         client = gspread.authorize(creds)
         logger.info("Google Sheets authentication successful")
@@ -184,15 +216,16 @@ def authenticate_sheets() -> Optional[gspread.Client]:
         return None
 
 
+@retry_with_backoff(max_retries=3, initial_delay=1)
 def upload_to_sheets(client: gspread.Client, data: List[Dict]) -> bool:
-    """Upload grant data to Google Sheets."""
+    """Upload grant data to Google Sheets with deduplication and retry logic."""
     try:
         if not data:
             logger.warning("No data to upload")
             return False
 
         sheet = client.open(CONFIG["google_sheet_name"])
-        worksheet = sheet.worksheet("New_Grants_Imported")
+        worksheet = sheet.worksheet(CONFIG["google_worksheet_name"])
 
         # Get existing data to avoid duplicates
         existing_records = worksheet.get_all_records()
@@ -208,9 +241,9 @@ def upload_to_sheets(client: gspread.Client, data: List[Dict]) -> bool:
             logger.info("No new grants to upload (all are duplicates)")
             return True
 
-        # Convert to rows
+        # Convert to rows (data only, no headers)
         df = pd.DataFrame(new_grants)
-        rows = [df.columns.values.tolist()] + df.values.tolist()
+        rows = df.values.tolist()
 
         # Append to worksheet
         worksheet.append_rows(rows, value_input_option='RAW')
@@ -322,6 +355,34 @@ def main():
         else:
             logger.error("Upload failed")
             return 1
+
+        # Phase 4: Send email alerts (optional, non-fatal if fails)
+        alert_sender = os.getenv("ALERT_SENDER_EMAIL")
+        alert_password = os.getenv("ALERT_SENDER_PASSWORD")
+        alert_recipients = os.getenv("ALERT_RECIPIENTS")
+
+        if all([alert_sender, alert_password, alert_recipients]):
+            try:
+                logger.info("Phase 4: Checking for high-value grants and sending email alerts...")
+                from email_alerts import send_high_scoring_grants_alert
+
+                recipients_list = [r.strip() for r in alert_recipients.split(",")]
+                threshold = int(os.getenv("RELEVANCE_SCORE_THRESHOLD", 80))
+
+                send_high_scoring_grants_alert(
+                    file_path=output_file,
+                    tab_name="Sheet1",  # Default Excel sheet name
+                    threshold=threshold,
+                    sender=alert_sender,
+                    password=alert_password,
+                    recipients=recipients_list
+                )
+                logger.info("Email alerts processed successfully")
+            except Exception as e:
+                logger.warning(f"Email alerts failed (non-fatal): {e}")
+                logger.info("Note: Email alerts require 'Relevance Score' column in data")
+        else:
+            logger.info("Phase 4: Skipping email alerts (credentials not configured)")
 
         logger.info("=" * 70)
         logger.info("Grant System Scraper Completed Successfully")
