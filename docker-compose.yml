@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  grant-scraper:
+    build: .
+    container_name: em-grant-scraper
+    env_file:
+      - .env
+    volumes:
+      # Mount logs and backups for persistence
+      - ./logs:/app/logs
+      - ./backups:/app/backups
+      - ./screenshots:/app/screenshots
+      - ./html_snapshots:/app/html_snapshots
+      # Mount credentials as read-only
+      - ./credentials.json:/app/credentials.json:ro
+    restart: unless-stopped
+    mem_limit: 2g
+    cpus: 1
+    environment:
+      - HEADLESS_MODE=True
+      - LOG_FILE=/app/logs/grant_system.log
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -85,13 +85,13 @@ def emoji(name: str) -> str:
 def has_cmd(cmd: str) -> bool:
     """Check if a command exists in PATH."""
     try:
-        subprocess.run(
+        result = subprocess.run(
             ["where" if sys.platform == "win32" else "which", cmd],
             capture_output=True,
             timeout=2,
             check=False,
         )
-        return True
+        return result.returncode == 0
     except Exception:
         return False
 

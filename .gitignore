@@ -56,10 +56,26 @@ env/
 *~
 .DS_Store
 
-# Project specific
-grantsgov-integration-298b73eb28d9.json
-doctor_report.json
-final_health_report.json
-.env
+# Project specific outputs
+*.xlsx
 *.log
 html_snapshots/
+screenshots/
+backups/
+logs/
+
+# Credentials and secrets
+.env
+*.json
+!requirements.json
+!package.json
+!tsconfig.json
+*credentials*.json
+*-???????.json
+*.pem
+*.key
+id_rsa*
+
+# Reports
+doctor_report.json
+final_health_report.json

@@ -4,12 +4,16 @@ Scrapes grant opportunities and uploads to Google Sheets with comprehensive erro
 Designed for scheduled/automated execution.
 """
 
+import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 import sys
 import time
 import random
-from datetime import datetime
+import signal
+import atexit
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Optional
 
@@ -18,19 +22,33 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlencode
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
 import pandas as pd
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
+from tenacity import retry, stop_after_attempt, wait_exponential
+from dotenv import load_dotenv
 
-# Configure logging
+# Load environment variables from .env file
+load_dotenv()
+
+# Configure logging with rotation and environment variables
+log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+log_file = os.getenv("LOG_FILE", "grant_system.log")
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, log_level),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('grant_system.log'),
+        RotatingFileHandler(
+            log_file,
+            maxBytes=10*1024*1024,  # 10MB
+            backupCount=5
+        ),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -58,9 +76,49 @@ CONFIG = {
 }
 
 
+# Global driver reference for cleanup
+_driver = None
+
+def cleanup():
+    """Cleanup function to ensure resources are released."""
+    global _driver
+    if _driver:
+        try:
+            _driver.quit()
+            logger.info("Browser cleanup completed")
+        except Exception as e:
+            logger.warning(f"Error during cleanup: {e}")
+
+    # Clean old files
+    try:
+        cleanup_old_files('screenshots', days=7)
+        cleanup_old_files('html_snapshots', days=7)
+        cleanup_old_files('.', pattern='grantsgov_output_*.xlsx', days=30)
+    except Exception as e:
+        logger.warning(f"Error cleaning old files: {e}")
+
+def cleanup_old_files(directory, days=30, pattern='*'):
+    """Remove files older than specified days."""
+    cutoff = datetime.now() - timedelta(days=days)
+    dir_path = Path(directory)
+    if not dir_path.exists():
+        return
+
+    for file in dir_path.glob(pattern):
+        if file.is_file():
+            file_mtime = datetime.fromtimestamp(file.stat().st_mtime)
+            if file_mtime < cutoff:
+                file.unlink()
+                logger.debug(f"Deleted old file: {file}")
+
+# Register cleanup handlers
+atexit.register(cleanup)
+signal.signal(signal.SIGTERM, lambda sig, frame: cleanup())
+
 # --- BROWSER SETUP ---
 def init_browser() -> Optional[webdriver.Chrome]:
-    """Initialize headless Chrome driver with proper options."""
+    """Initialize headless Chrome driver with automatic driver management."""
+    global _driver
     try:
         chrome_options = Options()
 
@@ -73,13 +131,15 @@ def init_browser() -> Optional[webdriver.Chrome]:
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
         chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
 
-        driver = webdriver.Chrome(options=chrome_options)
-        driver.set_page_load_timeout(CONFIG['timeout'])
+        # Use webdriver-manager for automatic ChromeDriver management
+        service = Service(ChromeDriverManager().install())
+        _driver = webdriver.Chrome(service=service, options=chrome_options)
+        _driver.set_page_load_timeout(CONFIG['timeout'])
 
         logger.info("Browser initialized successfully")
-        return driver
+        return _driver
     except Exception as e:
-        logger.error(f"Failed to initialize browser: {e}")
+        logger.error(f"Failed to initialize browser: {e}", exc_info=True)
         return None
 
 
@@ -160,57 +220,79 @@ def parse_grants(html: str) -> List[Dict]:
 
 
 # --- GOOGLE SHEETS ---
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def authenticate_sheets() -> Optional[gspread.Client]:
-    """Authenticate with Google Sheets API."""
+    """Authenticate with Google Sheets API using modern google-auth."""
     try:
         if not Path(CONFIG["credentials_file"]).exists():
             logger.error(f"Credentials file not found: {CONFIG['credentials_file']}")
             return None
 
-        scope = [
-            "https://spreadsheets.google.com/feeds",
+        # Use modern google-auth instead of deprecated oauth2client
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
-        creds = ServiceAccountCredentials.from_json_keyfile_name(
+        creds = Credentials.from_service_account_file(
             CONFIG["credentials_file"],
-            scope
+            scopes=scopes
         )
         client = gspread.authorize(creds)
         logger.info("Google Sheets authentication successful")
         return client
 
     except Exception as e:
-        logger.error(f"Google Sheets authentication failed: {e}")
+        logger.error(f"Google Sheets authentication failed: {e}", exc_info=True)
         return None
 
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def upload_to_sheets(client: gspread.Client, data: List[Dict]) -> bool:
-    """Upload grant data to Google Sheets."""
+    """Upload grant data to Google Sheets with deduplication and backup."""
     try:
         if not data:
             logger.warning("No data to upload")
             return False
 
         sheet = client.open(CONFIG["google_sheet_name"])
-        worksheet = sheet.worksheet("New_Grants_Imported")
+
+        # Get or create worksheet
+        try:
+            worksheet = sheet.worksheet("New_Grants_Imported")
+        except gspread.exceptions.WorksheetNotFound:
+            logger.info("Worksheet 'New_Grants_Imported' not found, creating...")
+            worksheet = sheet.add_worksheet(title="New_Grants_Imported", rows=1000, cols=20)
+            logger.info("Worksheet created")
 
         # Get existing data to avoid duplicates
         existing_records = worksheet.get_all_records()
-        existing_opp_numbers = {rec.get("Opportunity Number") for rec in existing_records}
+        existing_opp_numbers = {rec.get("Opportunity Number") for rec in existing_records if rec.get("Opportunity Number")}
+
+        logger.info(f"Found {len(existing_opp_numbers)} existing grants")
 
         # Filter out duplicates
         new_grants = [
             g for g in data
-            if g["Opportunity Number"] not in existing_opp_numbers
+            if g.get("Opportunity Number") not in existing_opp_numbers
         ]
 
         if not new_grants:
             logger.info("No new grants to upload (all are duplicates)")
             return True
 
-        # Convert to rows
+        # Backup existing data before modification
+        backup_dir = Path("backups")
+        backup_dir.mkdir(exist_ok=True)
+        backup_file = backup_dir / f"backup_sheets_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+        backup_data = worksheet.get_all_values()
+        with open(backup_file, 'w') as f:
+            json.dump(backup_data, f)
+        logger.info(f"Backup saved: {backup_file}")
+
+        # Convert to rows (FIXED: Don't include headers, worksheet already has them)
         df = pd.DataFrame(new_grants)
-        rows = [df.columns.values.tolist()] + df.values.tolist()
+        rows = df.values.tolist()  # Only data rows, no headers
 
         # Append to worksheet
         worksheet.append_rows(rows, value_input_option='RAW')
@@ -218,8 +300,11 @@ def upload_to_sheets(client: gspread.Client, data: List[Dict]) -> bool:
         logger.info(f"Successfully uploaded {len(new_grants)} new grants to Google Sheets")
         return True
 
+    except gspread.exceptions.SpreadsheetNotFound:
+        logger.error(f"Google Sheet '{CONFIG['google_sheet_name']}' not found. Please create it and share with service account.")
+        return False
     except Exception as e:
-        logger.error(f"Failed to upload to Google Sheets: {e}")
+        logger.error(f"Failed to upload to Google Sheets: {e}", exc_info=True)
         return False
 
 

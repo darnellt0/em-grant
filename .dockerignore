@@ -1,0 +1,47 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+screenshots/
+html_snapshots/
+backups/
+logs/
+*.xlsx
+*.log
+.env
+
+# Credentials
+*.json
+credentials/
+
+# Documentation (build only what's needed)
+*.md
+!README.md
+
+# Tests (not needed in production image)
+tests/
+pytest_cache/
+.coverage
+htmlcov/
