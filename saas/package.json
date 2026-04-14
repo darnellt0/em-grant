@@ -1,0 +1,14 @@
+{
+  "name": "em-grant-saas",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/web",
+    "packages/api"
+  ],
+  "scripts": {
+    "web:dev": "npm --workspace @em-grant/web run dev",
+    "web:build": "npm --workspace @em-grant/web run build",
+    "web:start": "npm --workspace @em-grant/web run start"
+  }
+}

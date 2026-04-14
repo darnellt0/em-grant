@@ -63,3 +63,9 @@ final_health_report.json
 .env
 *.log
 html_snapshots/
+
+# SaaS layer generated files
+saas/node_modules/
+saas/apps/web/.next/
+saas/**/*.tsbuildinfo
+saas/**/.env.local
