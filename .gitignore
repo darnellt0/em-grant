@@ -69,3 +69,7 @@ saas/node_modules/
 saas/apps/web/.next/
 saas/**/*.tsbuildinfo
 saas/**/.env.local
+
+# Allow frontend lib directory (overrides Python-era lib/ rule above)
+!saas/apps/web/src/lib/
+!saas/apps/web/src/lib/**

@@ -38,9 +38,9 @@ export function OrgProfileForm({ orgId, initial }: OrgProfileFormProps) {
   const [mission, setMission] = useState(initial?.mission ?? "");
   const [entityType, setEntityType] = useState<EntityType>(initial?.entity_type ?? "nonprofit");
   const [geography, setGeography] = useState(initial?.geography ?? "");
-  const [focusAreas, setFocusAreas] = useState(arrToText(initial?.focus_areas));
+  const [focusAreas, setFocusAreas] = useState(arrToText(initial?.focus_areas ?? null));
   const [eligibilityNotes, setEligibilityNotes] = useState(initial?.eligibility_notes ?? "");
-  const [searchKeywords, setSearchKeywords] = useState(arrToText(initial?.search_keywords));
+  const [searchKeywords, setSearchKeywords] = useState(arrToText(initial?.search_keywords ?? null));
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
