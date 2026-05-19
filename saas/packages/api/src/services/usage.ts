@@ -1,4 +1,4 @@
-import { EntitlementEndpoint, OrgPlan, getRequiredPlan } from "./entitlements";
+import { EntitlementEndpoint, OrgPlan, getRequiredPlan } from "./entitlements.ts";
 
 export type RunType = EntitlementEndpoint;
 
