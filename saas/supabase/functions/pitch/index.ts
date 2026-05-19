@@ -1,12 +1,15 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { generatePitch } from "../../../packages/api/src/services/pitch.ts";
+import { generatePitchWithLLM } from "../../../packages/api/src/services/pitch.ts";
 import { getRequiredPlan } from "../../../packages/api/src/services/entitlements.ts";
 import { UsageLimitError, reserveUsageOrThrow } from "../../../packages/api/src/services/usage.ts";
-import { buildSpendLog, estimateCostUsd } from "../../../packages/api/src/utils/spend.ts";
+import { buildSpendLog } from "../../../packages/api/src/utils/spend.ts";
+import { estimateActualCostUsd, makeAnthropicClient } from "../../../packages/api/src/services/llm.ts";
+import type { OrgProfile } from "../../../packages/api/src/types/org-profile.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY")!;
 
 function json(status: number, payload: Record<string, unknown>) {
   return new Response(JSON.stringify(payload), {
@@ -73,9 +76,6 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json(405, { error: "Method not allowed" });
 
   let runId: string | null = null;
-  const promptTokens = 500;
-  const completionTokens = 400;
-  const estimatedCost = estimateCostUsd(promptTokens + completionTokens);
 
   try {
     const body = await req.json();
@@ -85,6 +85,20 @@ Deno.serve(async (req) => {
     if (!grantId) return json(400, { error: "grant_id is required" });
 
     const { admin, userId } = await requireUserAndOrgMember(req.headers.get("Authorization"), orgId);
+
+    const { data: profileRow } = await admin
+      .from("org_profiles")
+      .select("*")
+      .eq("org_id", orgId)
+      .maybeSingle();
+
+    if (!profileRow) {
+      return json(400, {
+        error: "org_profile_missing",
+        message: "Set up your organization profile in Settings before generating a pitch.",
+      });
+    }
+    const profile = profileRow as OrgProfile;
 
     const { data: runRow, error: runCreateErr } = await admin
       .from("runs")
@@ -101,6 +115,7 @@ Deno.serve(async (req) => {
     if (runCreateErr || !runRow) throw new Error(runCreateErr?.message ?? "Failed to create run");
     runId = runRow.id as string;
 
+    const estimatedCost = 0.01;
     try {
       await reserveUsageOrThrow(admin as never, {
         orgId,
@@ -110,14 +125,7 @@ Deno.serve(async (req) => {
       });
     } catch (err) {
       if (err instanceof UsageLimitError) {
-        await admin
-          .from("runs")
-          .update({
-            status: "failed",
-            finished_at: new Date().toISOString(),
-            error: err.message,
-          })
-          .eq("id", runId);
+        await admin.from("runs").update({ status: "failed", finished_at: new Date().toISOString(), error: err.message }).eq("id", runId);
         return usageErrorToResponse(err, runId, "pitch");
       }
       throw err;
@@ -131,26 +139,26 @@ Deno.serve(async (req) => {
       .single();
     if (grantErr || !grant) throw new Error(grantErr?.message ?? "Grant not found");
 
-    const pitch = generatePitch({
-      id: grant.id as string,
-      grant_name: grant.grant_name as string,
-      sponsor_org: grant.sponsor_org as string | null,
-      amount_text: grant.amount_text as string | null,
-      focus_area: grant.focus_area as string | null,
-      eligibility_summary: grant.eligibility_summary as string | null,
-      deadline_text: grant.deadline_text as string | null,
-    });
+    const anthropic = makeAnthropicClient(ANTHROPIC_API_KEY);
+    const { pitch, inputTokens, outputTokens } = await generatePitchWithLLM(
+      {
+        id: grant.id as string,
+        grant_name: grant.grant_name as string,
+        sponsor_org: grant.sponsor_org as string | null,
+        amount_text: grant.amount_text as string | null,
+        focus_area: grant.focus_area as string | null,
+        eligibility_summary: grant.eligibility_summary as string | null,
+        deadline_text: grant.deadline_text as string | null,
+      },
+      profile,
+      anthropic,
+    );
 
     const checklistText = pitch.checklist.map((item, idx) => `${idx + 1}. ${item}`).join("\n");
     const noteBlock = `\n\n---\nDraft Pitch:\n${pitch.draft_pitch}\n\nChecklist:\n${checklistText}`;
     const updatedNotes = `${grant.notes ?? ""}${noteBlock}`.trim();
 
-    const { error: updateErr } = await admin
-      .from("grants")
-      .update({ notes: updatedNotes })
-      .eq("id", grantId)
-      .eq("org_id", orgId);
-    if (updateErr) throw new Error(updateErr.message);
+    await admin.from("grants").update({ notes: updatedNotes }).eq("id", grantId).eq("org_id", orgId);
 
     await admin.from("run_items").insert({
       run_id: runId,
@@ -159,49 +167,27 @@ Deno.serve(async (req) => {
       meta: { checklist_count: pitch.checklist.length },
     });
 
+    const actualCost = estimateActualCostUsd(inputTokens, outputTokens, "claude-sonnet-4-6");
     const spend = buildSpendLog({
       orgId,
       runId: runId ?? undefined,
-      provider: "openai",
-      model: "gpt-4o-mini",
-      promptTokens,
-      completionTokens,
-      meta: { endpoint: "pitch", stub: true, grant_id: grantId },
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      promptTokens: inputTokens,
+      completionTokens: outputTokens,
+      meta: { endpoint: "pitch", grant_id: grantId },
     });
-    await admin.from("llm_spend_logs").insert(spend);
+    await admin.from("llm_spend_logs").insert({ ...spend, cost_usd: actualCost });
 
-    const output = {
-      pitched_grant_id: grantId,
-      checklist_count: pitch.checklist.length,
-    };
+    const output = { pitched_grant_id: grantId, checklist_count: pitch.checklist.length };
+    await admin.from("runs").update({ status: "succeeded", finished_at: new Date().toISOString(), output }).eq("id", runId);
 
-    await admin
-      .from("runs")
-      .update({
-        status: "succeeded",
-        finished_at: new Date().toISOString(),
-        output,
-      })
-      .eq("id", runId);
-
-    return json(200, {
-      run_id: runId,
-      status: "succeeded",
-      summary: output,
-      draft_pitch: pitch.draft_pitch,
-    });
+    return json(200, { run_id: runId, status: "succeeded", summary: output, draft_pitch: pitch.draft_pitch });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     if (runId) {
       const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-      await admin
-        .from("runs")
-        .update({
-          status: "failed",
-          finished_at: new Date().toISOString(),
-          error: message,
-        })
-        .eq("id", runId);
+      await admin.from("runs").update({ status: "failed", finished_at: new Date().toISOString(), error: message }).eq("id", runId);
     }
     return json(500, { error: message, run_id: runId });
   }

@@ -1,3 +1,8 @@
+import type Anthropic from "npm:@anthropic-ai/sdk";
+import type { OrgProfile } from "../types/org-profile.ts";
+import { profileToContext } from "../types/org-profile.ts";
+import { callClaude } from "./llm.ts";
+
 export interface GrantForAssessment {
   id: string;
   grant_name: string;
@@ -20,75 +25,116 @@ export interface GrantAssessmentResult {
   overall_strategic_value: number;
 }
 
-function containsAny(haystack: string, needles: string[]): boolean {
-  return needles.some((needle) => haystack.includes(needle));
+interface LLMAssessmentRow {
+  grant_id: string;
+  priority_score: number;
+  eligibility_confidence: number;
+  mission_alignment: number;
+  program_fit: number;
+  community_impact: number;
 }
 
-function clamp(num: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, num));
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Math.round(n)));
 }
 
-export function assessGrant(grant: GrantForAssessment): GrantAssessmentResult {
-  const text = [
-    grant.grant_name,
-    grant.sponsor_org ?? "",
-    grant.focus_area ?? "",
-    grant.eligibility_summary ?? "",
-    grant.notes ?? "",
-  ]
-    .join(" ")
-    .toLowerCase();
+function rowToResult(row: LLMAssessmentRow): GrantAssessmentResult {
+  const priority = clamp(row.priority_score, 0, 100);
+  const eligibility = clamp(row.eligibility_confidence, 0, 100);
+  const mission = clamp(row.mission_alignment, 1, 10);
+  const programFit = clamp(row.program_fit, 1, 10);
+  const community = clamp(row.community_impact, 1, 10);
 
-  let priority = 50;
-  let businessMatch = 55;
-  let woc = 4;
-  let leadership = 4;
-  let community = 4;
-
-  if (containsAny(text, ["women of color", "woc", "black women", "minority women"])) {
-    priority += 20;
-    businessMatch += 15;
-    woc += 4;
-  }
-  if (containsAny(text, ["leadership", "professional development", "coaching"])) {
-    priority += 12;
-    leadership += 4;
-  }
-  if (containsAny(text, ["community", "equity", "social impact"])) {
-    priority += 10;
-    community += 4;
-  }
-  if (containsAny(text, ["california", "bay area", "silicon valley"])) {
-    priority += 6;
-    businessMatch += 5;
-  }
-  if (containsAny(text, ["rolling", "ongoing"])) {
-    priority += 4;
-  }
-
-  priority = clamp(priority, 0, 100);
-  businessMatch = clamp(businessMatch, 0, 100);
-  woc = clamp(woc, 1, 10);
-  leadership = clamp(leadership, 1, 10);
-  community = clamp(community, 1, 10);
-
-  const llc = clamp(Math.round(priority * 0.45 + businessMatch * 0.35 + woc * 2), 0, 100);
-  const foundation = clamp(Math.round(priority * 0.35 + community * 4 + leadership * 3), 0, 100);
-  const overall = clamp(Math.round((llc + foundation) / 2), 0, 100);
+  const llcScore = clamp(priority * 0.45 + eligibility * 0.35 + mission * 2, 0, 100);
+  const foundationScore = clamp(priority * 0.35 + community * 4 + programFit * 3, 0, 100);
+  const overall = clamp((llcScore + foundationScore) / 2, 0, 100);
 
   return {
-    grant_id: grant.id,
+    grant_id: row.grant_id,
     priority_score: priority,
-    business_match_pct: businessMatch,
-    woc_focus_rating: woc,
-    leadership_dev_alignment: leadership,
+    business_match_pct: eligibility,
+    woc_focus_rating: mission,
+    leadership_dev_alignment: programFit,
     community_impact_score: community,
-    llc_priority_score: llc,
-    foundation_priority_score: foundation,
+    llc_priority_score: llcScore,
+    foundation_priority_score: foundationScore,
     overall_strategic_value: overall,
   };
 }
 
-export function assessGrants(grants: GrantForAssessment[]): GrantAssessmentResult[] {
-  return grants.map(assessGrant);
+export async function assessGrantsWithLLM(
+  grants: GrantForAssessment[],
+  profile: OrgProfile,
+  anthropic: Anthropic,
+): Promise<{ results: GrantAssessmentResult[]; inputTokens: number; outputTokens: number }> {
+  if (grants.length === 0) {
+    return { results: [], inputTokens: 0, outputTokens: 0 };
+  }
+
+  const orgContext = profileToContext(profile);
+  const grantList = grants
+    .map(
+      (g, i) =>
+        `${i + 1}. ID: ${g.id}\n` +
+        `   Name: ${g.grant_name}\n` +
+        `   Funder: ${g.sponsor_org ?? "Unknown"}\n` +
+        `   Focus: ${g.focus_area ?? "Not specified"}\n` +
+        `   Eligibility: ${g.eligibility_summary ?? "Not specified"}\n` +
+        `   Amount: ${g.amount_text ?? "Not specified"}`,
+    )
+    .join("\n\n");
+
+  const system = `You are a grant analyst. Score each grant opportunity for relevance and fit to the given organization.
+
+Return a JSON array. Each object must have:
+- grant_id (string, the exact ID provided)
+- priority_score (0-100): overall priority — how urgently the org should pursue this
+- eligibility_confidence (0-100): how confident you are the org is eligible based on entity type and profile
+- mission_alignment (1-10): how well the grant's focus aligns with the org's mission
+- program_fit (1-10): how well the org's actual programs match what the funder wants to fund
+- community_impact (1-10): expected community impact if this org wins the grant
+
+Return ONLY the JSON array. No explanation, no markdown.`;
+
+  const user = `Organization:
+${orgContext}
+
+Grants to assess:
+${grantList}`;
+
+  const result = await callClaude(anthropic, { system, user, maxTokens: 2048 });
+
+  let rows: LLMAssessmentRow[] = [];
+  try {
+    const cleaned = result.text.replace(/```json/gi, "").replace(/```/g, "").trim();
+    const parsed = JSON.parse(cleaned);
+    rows = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    // Fall back to defaults if parse fails
+    rows = grants.map((g) => ({
+      grant_id: g.id,
+      priority_score: 50,
+      eligibility_confidence: 50,
+      mission_alignment: 5,
+      program_fit: 5,
+      community_impact: 5,
+    }));
+  }
+
+  const idToRow = new Map(rows.map((r) => [r.grant_id, r]));
+  const results = grants.map((g) => {
+    const row = idToRow.get(g.id) ?? {
+      grant_id: g.id,
+      priority_score: 50,
+      eligibility_confidence: 50,
+      mission_alignment: 5,
+      program_fit: 5,
+      community_impact: 5,
+    };
+    return rowToResult(row);
+  });
+
+  return { results, inputTokens: result.inputTokens, outputTokens: result.outputTokens };
 }
+
+export { assessGrantsWithLLM as assessGrants };

@@ -563,3 +563,26 @@ drop trigger if exists set_feature_flags_updated_at on public.feature_flags;
 create trigger set_feature_flags_updated_at
 before update on public.feature_flags
 for each row execute function public.set_updated_at();
+
+-- =========
+-- ORG PROFILES (mission context for LLM-powered discovery/assess/pitch)
+-- =========
+
+create table if not exists public.org_profiles (
+  org_id            uuid primary key references public.orgs(id) on delete cascade,
+  org_name          text,
+  mission           text,
+  entity_type       text not null default 'nonprofit'
+                      check (entity_type in ('nonprofit','llc','hybrid','other')),
+  geography         text,
+  focus_areas       text[],
+  eligibility_notes text,
+  search_keywords   text[],
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now()
+);
+
+drop trigger if exists set_org_profiles_updated_at on public.org_profiles;
+create trigger set_org_profiles_updated_at
+before update on public.org_profiles
+for each row execute function public.set_updated_at();

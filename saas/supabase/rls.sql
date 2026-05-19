@@ -160,3 +160,33 @@ drop policy if exists "feature_flags_select_member" on public.feature_flags;
 create policy "feature_flags_select_member"
 on public.feature_flags for select
 using (public.is_org_member(org_id));
+
+-- ORG PROFILES: members can read; owner/admin can write
+alter table public.org_profiles enable row level security;
+
+drop policy if exists "profiles_select_member" on public.org_profiles;
+create policy "profiles_select_member"
+on public.org_profiles for select
+using (public.is_org_member(org_id));
+
+drop policy if exists "profiles_insert_owner_admin" on public.org_profiles;
+create policy "profiles_insert_owner_admin"
+on public.org_profiles for insert
+with check (
+  exists (
+    select 1 from public.org_members m
+    where m.org_id = org_id and m.user_id = auth.uid()
+      and m.role in ('owner','admin')
+  )
+);
+
+drop policy if exists "profiles_update_owner_admin" on public.org_profiles;
+create policy "profiles_update_owner_admin"
+on public.org_profiles for update
+using (
+  exists (
+    select 1 from public.org_members m
+    where m.org_id = org_id and m.user_id = auth.uid()
+      and m.role in ('owner','admin')
+  )
+);

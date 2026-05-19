@@ -1,12 +1,15 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { buildDiscoverStub } from "../../../packages/api/src/services/discover.ts";
+import { discoverGrants } from "../../../packages/api/src/services/discover.ts";
 import { getRequiredPlan } from "../../../packages/api/src/services/entitlements.ts";
 import { UsageLimitError, applyUsageDelta, reserveUsageOrThrow } from "../../../packages/api/src/services/usage.ts";
-import { buildSpendLog, estimateCostUsd } from "../../../packages/api/src/utils/spend.ts";
+import { buildSpendLog } from "../../../packages/api/src/utils/spend.ts";
+import { estimateActualCostUsd, makeAnthropicClient } from "../../../packages/api/src/services/llm.ts";
+import type { OrgProfile } from "../../../packages/api/src/types/org-profile.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY")!;
 
 function json(status: number, payload: Record<string, unknown>) {
   return new Response(JSON.stringify(payload), {
@@ -73,10 +76,6 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json(405, { error: "Method not allowed" });
 
   let runId: string | null = null;
-  const promptTokens = 800;
-  const completionTokens = 300;
-  const estimatedCost = estimateCostUsd(promptTokens + completionTokens);
-  const estimatedCandidates = 2;
 
   try {
     const body = await req.json();
@@ -84,6 +83,21 @@ Deno.serve(async (req) => {
     if (!orgId) return json(400, { error: "org_id is required" });
 
     const { admin, userId } = await requireUserAndOrgMember(req.headers.get("Authorization"), orgId);
+
+    // Fetch org profile — required for real discovery
+    const { data: profileRow } = await admin
+      .from("org_profiles")
+      .select("*")
+      .eq("org_id", orgId)
+      .maybeSingle();
+
+    if (!profileRow) {
+      return json(400, {
+        error: "org_profile_missing",
+        message: "Set up your organization profile in Settings before running discovery.",
+      });
+    }
+    const profile = profileRow as OrgProfile;
 
     const { data: runRow, error: runCreateErr } = await admin
       .from("runs")
@@ -100,6 +114,9 @@ Deno.serve(async (req) => {
     if (runCreateErr || !runRow) throw new Error(runCreateErr?.message ?? "Failed to create run");
     runId = runRow.id as string;
 
+    // Reserve estimated usage (2 candidates, ~$0.002 cost)
+    const estimatedCandidates = 2;
+    const estimatedCost = 0.002;
     try {
       await reserveUsageOrThrow(admin as never, {
         orgId,
@@ -109,14 +126,7 @@ Deno.serve(async (req) => {
       });
     } catch (err) {
       if (err instanceof UsageLimitError) {
-        await admin
-          .from("runs")
-          .update({
-            status: "failed",
-            finished_at: new Date().toISOString(),
-            error: err.message,
-          })
-          .eq("id", runId);
+        await admin.from("runs").update({ status: "failed", finished_at: new Date().toISOString(), error: err.message }).eq("id", runId);
         return usageErrorToResponse(err, runId, "discover");
       }
       throw err;
@@ -128,10 +138,13 @@ Deno.serve(async (req) => {
       .eq("org_id", orgId)
       .limit(500);
 
-    const candidates = buildDiscoverStub({
+    const anthropic = makeAnthropicClient(ANTHROPIC_API_KEY);
+    const { candidates, inputTokens, outputTokens } = await discoverGrants({
       orgId,
+      profile,
       query: body.query,
       existingGrants: (existing ?? []) as Array<{ grant_name?: string; sponsor_org?: string }>,
+      anthropic,
     });
 
     let inserted: Array<{ id: string }> = [];
@@ -150,8 +163,8 @@ Deno.serve(async (req) => {
             application_link: c.application_link ?? null,
             geographic_scope: c.geographic_scope ?? null,
             funder_type: c.funder_type ?? null,
-            discovery_source: c.discovery_source ?? "discover_stub",
-            source_reliability_score: c.source_reliability_score ?? 6,
+            discovery_source: c.discovery_source ?? "grants_gov",
+            source_reliability_score: c.source_reliability_score ?? 8,
             status: c.status ?? "open",
             notes: c.notes ?? null,
           })),
@@ -163,65 +176,43 @@ Deno.serve(async (req) => {
     }
 
     if (inserted.length > 0) {
-      const { error: runItemsErr } = await admin.from("run_items").insert(
+      await admin.from("run_items").insert(
         inserted.map((g) => ({
           run_id: runId,
           grant_id: g.id,
           action: "inserted",
-          meta: { source: "discover_stub" },
+          meta: { source: "grants_gov" },
         })),
       );
-      if (runItemsErr) throw new Error(runItemsErr.message);
     }
 
+    const actualCost = estimateActualCostUsd(inputTokens, outputTokens);
     const spend = buildSpendLog({
       orgId,
       runId: runId ?? undefined,
-      provider: "openai",
-      model: "gpt-4o-mini",
-      promptTokens,
-      completionTokens,
-      meta: { endpoint: "discover", stub: true },
+      provider: "anthropic",
+      model: "claude-haiku-4-5-20251001",
+      promptTokens: inputTokens,
+      completionTokens: outputTokens,
+      meta: { endpoint: "discover" },
     });
-    await admin.from("llm_spend_logs").insert(spend);
+    await admin.from("llm_spend_logs").insert({ ...spend, cost_usd: actualCost });
 
     const candidateDelta = inserted.length - estimatedCandidates;
-    const costDelta = Number(spend.cost_usd) - estimatedCost;
+    const costDelta = actualCost - estimatedCost;
     if (candidateDelta !== 0 || costDelta !== 0) {
       await applyUsageDelta(admin as never, orgId, candidateDelta, costDelta);
     }
 
-    const output = {
-      inserted_count: inserted.length,
-      candidates_count: candidates.length,
-    };
+    const output = { inserted_count: inserted.length, candidates_count: candidates.length };
+    await admin.from("runs").update({ status: "succeeded", finished_at: new Date().toISOString(), output }).eq("id", runId);
 
-    await admin
-      .from("runs")
-      .update({
-        status: "succeeded",
-        finished_at: new Date().toISOString(),
-        output,
-      })
-      .eq("id", runId);
-
-    return json(200, {
-      run_id: runId,
-      status: "succeeded",
-      summary: output,
-    });
+    return json(200, { run_id: runId, status: "succeeded", summary: output });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     if (runId) {
       const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-      await admin
-        .from("runs")
-        .update({
-          status: "failed",
-          finished_at: new Date().toISOString(),
-          error: message,
-        })
-        .eq("id", runId);
+      await admin.from("runs").update({ status: "failed", finished_at: new Date().toISOString(), error: message }).eq("id", runId);
     }
     return json(500, { error: message, run_id: runId });
   }
