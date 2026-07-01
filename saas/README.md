@@ -215,8 +215,29 @@ curl "http://127.0.0.1:54321/rest/v1/grants?select=id,org_id,grant_name" \
 
 4. Repeat as org B user and verify org A rows are not returned.
 
+## 12) Onboarding & Team Invites
+
+First-time users land on `/onboarding` after login:
+
+1. **Create an organization** — calls the `create_org_with_owner` RPC, which
+   creates the org and the owner membership atomically (plain inserts are
+   blocked by RLS by design).
+2. **Or accept an invite** — pending invites for the signed-in email are shown
+   automatically.
+
+Owners/admins invite teammates from **Settings → Team**: enter an email and
+role, and the teammate signs in with that email (magic link or Google) and
+accepts from their welcome screen. No invite email is sent by the app yet —
+send them the app link yourself. Invites can be revoked while pending.
+
+Relevant migration: `supabase/migrations/002_onboarding_and_invites.sql`
+(also fixes cross-org RLS policy bugs).
+
 ## Notes
 
 1. Frontend only uses anon key + user session token.
 2. Stripe secret keys remain server/edge-only.
-3. LLM integration remains stubbed, but run tracking, spend logging, and quota enforcement are active.
+3. LLM integration is live (Anthropic Claude — Haiku for discover/assess, Sonnet for pitch), with run tracking, spend logging, and quota enforcement active.
+4. The live Supabase project (`idebrliatulbriuitmuy`) may carry newer edge
+   functions and migrations than this repo — check before redeploying
+   `discover`/`assess`/`pitch` (see `deploy.sh` FUNCTIONS variable).

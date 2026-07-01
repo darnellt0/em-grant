@@ -82,8 +82,13 @@ fi
 echo "     Secrets set."
 
 # ── Step 4: Deploy edge functions ──────────────────────────────────────────────
+# WARNING: the live project's discover/assess/pitch (and functions not in this
+# repo, e.g. draft_application, polish_with_voice) may be NEWER than this repo —
+# they have also been developed with other tooling. Set FUNCTIONS to control
+# what gets deployed, e.g. FUNCTIONS="stripe_checkout stripe_portal stripe_webhook".
+FUNCTIONS="${FUNCTIONS:-discover assess pitch stripe_checkout stripe_portal stripe_webhook}"
 echo "4/5  Deploying edge functions..."
-for fn in discover assess pitch stripe_checkout stripe_portal stripe_webhook; do
+for fn in $FUNCTIONS; do
   echo "     Deploying $fn..."
   supabase functions deploy "$fn" --no-verify-jwt
 done

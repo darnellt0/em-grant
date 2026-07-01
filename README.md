@@ -1,55 +1,18 @@
-# Elevated Movements Python ↔ Google Sheets Bridge
+# EM Grant — grant discovery & application platform
 
-This bundle connects your Python scraper output to your Google Sheets-based Apps Script system.
+Grant discovery, assessment, and pitch drafting for Elevated Movements.
 
-## 1. SETUP
+## What's in this repo
 
-Install Python packages:
-```bash
-pip install pandas gspread oauth2client openpyxl
-```
+| Path | Status | Description |
+|---|---|---|
+| `saas/` | **Primary — active** | Next.js + Supabase + Stripe web app. Grants.gov API search filtered and scored by Claude, org profiles, team invites, usage quotas, billing. See `saas/README.md`. |
+| `Module1..16_*.js`, `checkCost.js` | Legacy (superseded) | Google Apps Script grant tracker that lives in a Google Sheet. Superseded by the SaaS app; kept for reference. Deployed via `clasp` (`.clasp.json`). |
+| `legacy/python-scraper/` | Retired | Original Selenium scraper for grants.gov. Broken by the grants.gov redesign; replaced by the API-based `discover` edge function. |
 
-Place your `credentials.json` file in this folder.
+## Production
 
-## 2. PYTHON USAGE
-
-From your main scraper script, call:
-
-```python
-from bridge_upload import upload_grants_to_sheets
-
-upload_grants_to_sheets(
-    file_path='grantsgov_output.xlsx',
-    sheet_name='GrantWatch Grants',
-    tab_name='New_Grants_Imported',
-    creds_file='credentials.json'
-)
-```
-
-## 3. TRIGGER IMPORT INTO Apps Script
-
-Open the Grant Tracker Google Sheet and click menu: **Grant System > Import From Python Bridge**
-
-Or, deploy as Web App and call from Python:
-
-```python
-import requests
-requests.get("https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec")
-```
-
-## 4. OPTIONAL: EMAIL ALERT
-
-Call this separately if needed:
-
-```python
-from email_alerts import send_high_scoring_grants_alert
-
-send_high_scoring_grants_alert(
-    file_path='grantsgov_output.xlsx',
-    tab_name='New_Grants',
-    threshold=80,
-    sender='your_email@gmail.com',
-    password='your_app_password',
-    recipients=['shria@elevated-movements.com']
-)
-```
+The live backend is the Supabase project **em-grant** (`idebrliatulbriuitmuy`).
+Note that the live edge functions and database migrations may be ahead of this
+repo (they have also been developed with other tooling) — check what is
+deployed before overwriting `discover`, `assess`, or `pitch`.

@@ -21,6 +21,6 @@ export async function requireOrgIdForUser(userId: string): Promise<string> {
     .limit(1)
     .maybeSingle();
 
-  if (!membership?.org_id) redirect("/login");
+  if (!membership?.org_id) redirect("/onboarding");
   return membership.org_id as string;
 }

@@ -3,21 +3,33 @@ import { requireOrgIdForUser, requireUser } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { OrgProfileForm } from "./OrgProfileForm";
 import type { OrgProfileData } from "./OrgProfileForm";
+import { InviteTeammateForm } from "./InviteTeammateForm";
+import type { PendingOrgInvite } from "./InviteTeammateForm";
+
+interface OrgMemberRow {
+  user_id: string;
+  email: string | null;
+  role: string;
+  created_at: string | null;
+}
 
 export default async function SettingsPage() {
   const user = await requireUser();
   const orgId = await requireOrgIdForUser(user.id);
   const supabase = createSupabaseServerClient();
 
-  const [{ data: org }, { data: members }, { data: profile }] = await Promise.all([
-    supabase.from("orgs").select("id,name,slug,created_at").eq("id", orgId).maybeSingle(),
-    supabase
-      .from("org_members")
-      .select("user_id,role,created_at")
-      .eq("org_id", orgId)
-      .order("created_at", { ascending: true }),
-    supabase.from("org_profiles").select("*").eq("org_id", orgId).maybeSingle(),
-  ]);
+  const [{ data: org }, { data: members }, { data: profile }, { data: pendingInvites }] =
+    await Promise.all([
+      supabase.from("orgs").select("id,name,slug,created_at").eq("id", orgId).maybeSingle(),
+      supabase.rpc("get_org_member_emails", { _org_id: orgId }),
+      supabase.from("org_profiles").select("*").eq("org_id", orgId).maybeSingle(),
+      supabase
+        .from("org_invites")
+        .select("id,email,role,created_at")
+        .eq("org_id", orgId)
+        .is("accepted_at", null)
+        .order("created_at", { ascending: true }),
+    ]);
 
   return (
     <section>
@@ -49,25 +61,34 @@ export default async function SettingsPage() {
       </div>
 
       <div className="card">
-        <h3>Members</h3>
+        <h3>Team</h3>
         <table>
           <thead>
             <tr>
-              <th>User ID</th>
+              <th>Email</th>
               <th>Role</th>
               <th>Joined</th>
             </tr>
           </thead>
           <tbody>
-            {(members ?? []).map((member) => (
+            {((members ?? []) as OrgMemberRow[]).map((member) => (
               <tr key={member.user_id}>
-                <td>{member.user_id}</td>
+                <td>{member.email ?? member.user_id}</td>
                 <td>{member.role}</td>
                 <td>{member.created_at ? new Date(member.created_at).toLocaleString() : "-"}</td>
               </tr>
             ))}
           </tbody>
         </table>
+        <h4 style={{ marginBottom: 4 }}>Invite a teammate</h4>
+        <p style={{ color: "#555", marginTop: 0 }}>
+          Invited teammates sign in with their email at this app and accept the
+          invite from their welcome screen — no separate signup needed.
+        </p>
+        <InviteTeammateForm
+          orgId={orgId}
+          pendingInvites={(pendingInvites ?? []) as PendingOrgInvite[]}
+        />
       </div>
 
       <div className="card">

@@ -190,7 +190,9 @@ Deno.serve(async (req) => {
     const rawBody = await req.text();
     let event: Stripe.Event;
     try {
-      event = stripe.webhooks.constructEvent(rawBody, signature, STRIPE_WEBHOOK_SECRET);
+      // constructEventAsync: the sync variant relies on Node crypto and
+      // throws in the Deno edge runtime
+      event = await stripe.webhooks.constructEventAsync(rawBody, signature, STRIPE_WEBHOOK_SECRET);
     } catch (error) {
       return json(400, { error: `Signature verification failed: ${(error as Error).message}` });
     }
