@@ -83,7 +83,7 @@ echo "     Secrets set."
 
 # ── Step 4: Deploy edge functions ──────────────────────────────────────────────
 echo "4/5  Deploying edge functions..."
-for fn in discover assess pitch; do
+for fn in discover assess pitch stripe_checkout stripe_portal stripe_webhook; do
   echo "     Deploying $fn..."
   supabase functions deploy "$fn" --no-verify-jwt
 done

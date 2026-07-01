@@ -1,10 +1,10 @@
 import pandas as pd
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 
 def upload_grants_to_sheets(file_path, sheet_name, tab_name, creds_file):
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    creds = ServiceAccountCredentials.from_json_keyfile_name(creds_file, scope)
+    scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    creds = Credentials.from_service_account_file(creds_file, scopes=scope)
     client = gspread.authorize(creds)
 
     if file_path.endswith('.xlsx'):
@@ -18,7 +18,7 @@ def upload_grants_to_sheets(file_path, sheet_name, tab_name, creds_file):
         existing_data = worksheet.get_all_records()
         existing_df = pd.DataFrame(existing_data)
     except gspread.exceptions.WorksheetNotFound:
-        worksheet = sheet.add_worksheet(title=tab_name, rows="100", cols="20")
+        worksheet = sheet.add_worksheet(title=tab_name, rows=100, cols=20)
         existing_df = pd.DataFrame()
 
     if 'Opportunity Number' in df.columns and 'Opportunity Number' in existing_df.columns:

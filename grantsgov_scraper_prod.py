@@ -23,7 +23,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import pandas as pd
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 
 # Configure logging
 logging.basicConfig(
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 # --- CONFIG ---
 CONFIG = {
-    "base_url": "https://www.grants.gov/search-grants",
+    "base_url": os.getenv("GRANTS_GOV_BASE_URL", "https://www.grants.gov/search-grants"),
     "params": {
         "oppStatuses": os.getenv("OPPORTUNITY_STATUSES", "forecasted,posted"),
         "eligibilities": os.getenv("ELIGIBILITY_CODES", "25,11,99"),
@@ -168,12 +168,12 @@ def authenticate_sheets() -> Optional[gspread.Client]:
             return None
 
         scope = [
-            "https://spreadsheets.google.com/feeds",
+            "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
-        creds = ServiceAccountCredentials.from_json_keyfile_name(
+        creds = Credentials.from_service_account_file(
             CONFIG["credentials_file"],
-            scope
+            scopes=scope
         )
         client = gspread.authorize(creds)
         logger.info("Google Sheets authentication successful")

@@ -39,10 +39,10 @@ export function estimateActualCostUsd(
   outputTokens: number,
   model = "claude-haiku-4-5-20251001",
 ): number {
-  // Haiku 4.5: $0.80/M input, $4.00/M output
+  // Haiku 4.5: $1.00/M input, $5.00/M output
   // Sonnet 4.6: $3.00/M input, $15.00/M output
   const rates: Record<string, [number, number]> = {
-    "claude-haiku-4-5-20251001": [0.0000008, 0.000004],
+    "claude-haiku-4-5-20251001": [0.000001, 0.000005],
     "claude-sonnet-4-6": [0.000003, 0.000015],
   };
   const [inRate, outRate] = rates[model] ?? rates["claude-haiku-4-5-20251001"];

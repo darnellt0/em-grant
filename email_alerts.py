@@ -4,6 +4,12 @@ from email.message import EmailMessage
 
 def send_high_scoring_grants_alert(file_path, tab_name, threshold, sender, password, recipients):
     df = pd.read_excel(file_path, sheet_name=tab_name)
+
+    if 'Relevance Score' not in df.columns:
+        print("⚠️ No 'Relevance Score' column found — add scoring to the sheet "
+              "(or a 'Relevance Score' column) before enabling email alerts.")
+        return
+
     high_scores = df[df['Relevance Score'] >= threshold]
 
     if high_scores.empty:
@@ -15,8 +21,11 @@ def send_high_scoring_grants_alert(file_path, tab_name, threshold, sender, passw
     msg['From'] = sender
     msg['To'] = ', '.join(recipients)
 
+    def deadline_of(row):
+        return row.get('Close Date', row.get('Deadline', 'Unknown'))
+
     body = "\n\n".join([
-        f"{row['Title']} ({row['Relevance Score']})\n{row['Link']}\nDeadline: {row['Deadline']}\n"
+        f"{row['Title']} ({row['Relevance Score']})\n{row['Link']}\nDeadline: {deadline_of(row)}\n"
         for _, row in high_scores.iterrows()
     ])
     msg.set_content(body)
