@@ -1,0 +1,51 @@
+name: Recover Vercel deployment source
+
+# Downloads the source files of a Vercel CLI deployment (the June 10, 2026
+# production deploy whose commits were never pushed to GitHub) and pushes
+# them to the branch recovered/june-10-vercel-source.
+#
+# Requires a repository Actions secret named VERCEL_TOKEN
+# (create the token at https://vercel.com/account/tokens).
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_id:
+        description: Vercel deployment ID to recover
+        default: dpl_74PK1qxGdiEc8FJ42uJabMntKbAY
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Download deployment source from Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::error::VERCEL_TOKEN secret is not set. Add it under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          node saas/scripts/recover-vercel-source.mjs \
+            "${{ github.event.inputs.deployment_id || 'dpl_74PK1qxGdiEc8FJ42uJabMntKbAY' }}" \
+            recovered-src
+
+      - name: Push recovered source to recovery branch
+        run: |
+          git config user.name "vercel-source-recovery"
+          git config user.email "actions@users.noreply.github.com"
+          git checkout -b recovered/june-10-vercel-source
+          git add -f recovered-src
+          git commit -m "Recovered source of Vercel production deployment (June 10, 2026)"
+          git push -f origin recovered/june-10-vercel-source
+          echo "Recovered files pushed to branch recovered/june-10-vercel-source"
