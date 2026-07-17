@@ -92,6 +92,16 @@ export default async function SettingsPage() {
       </div>
 
       <div className="card">
+        <h3>Documents</h3>
+        <p style={{ color: "#555", marginTop: 0, marginBottom: 8 }}>
+          Store org documents grant funders require — IRS letter, 990, audit, board roster, budget templates, founder bios. Upload once, reference everywhere.
+        </p>
+        <Link href="/dashboard/settings/documents" style={{ fontWeight: 500 }}>
+          Manage documents →
+        </Link>
+      </div>
+
+      <div className="card">
         <h3>Billing & Usage</h3>
         <p>
           <Link href="/dashboard/settings/billing">Go to Billing</Link>

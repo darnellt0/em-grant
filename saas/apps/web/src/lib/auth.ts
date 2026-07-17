@@ -13,7 +13,7 @@ export async function requireUser() {
 
 export async function requireOrgIdForUser(userId: string): Promise<string> {
   const supabase = createSupabaseServerClient();
-  const { data: membership } = await supabase
+  const { data: membership, error } = await supabase
     .from("org_members")
     .select("org_id")
     .eq("user_id", userId)
