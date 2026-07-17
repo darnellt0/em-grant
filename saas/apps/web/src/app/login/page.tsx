@@ -43,7 +43,7 @@ export default function LoginPage() {
     try {
       const { error: signInError } = await supabase.auth.signInWithOtp({
         email,
-        options: { emailRedirectTo: `${window.location.origin}/dashboard/grants` },
+        options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/dashboard/grants` },
       });
       if (signInError) { setError(signInError.message); return; }
       setMessage("Magic link sent — check your inbox.");
@@ -56,7 +56,7 @@ export default function LoginPage() {
     reset();
     await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: `${window.location.origin}/dashboard/grants` },
+      options: { redirectTo: `${window.location.origin}/auth/callback?next=/dashboard/grants` },
     });
   }
 
