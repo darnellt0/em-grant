@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; }
+
+body {
+  background-color: #0d0a12;
+  background-image:
+    radial-gradient(ellipse 90% 60% at 60% -5%,  rgba(54, 1, 63, 0.35) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 40% at 5%  90%,  rgba(23, 97, 97, 0.18) 0%, transparent 55%);
+  background-attachment: fixed;
+  color: #f1f5f9;
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+/* Glass card */
+.glass {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.glass:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, #7b3f8c 0%, #5a1a6b 40%, #36013F 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-text-pursue {
+  background: linear-gradient(135deg, #E0CD67 0%, #d4af37 50%, #b8920a 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gold-rule {
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, #E0CD67 25%, #E0CD67 75%, transparent 100%);
+  opacity: 0.5;
+  margin: 0.5rem 0 1rem;
+}
+
+/* Section label style */
+.label-caps {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar       { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+
+/* Funnel bar fill animation */
+@keyframes growUp {
+  from { height: 0; opacity: 0; }
+  to   { opacity: 1; }
+}
+.funnel-bar { animation: growUp 0.6s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.funnel-bar:nth-child(1) { animation-delay: 0.05s; }
+.funnel-bar:nth-child(2) { animation-delay: 0.12s; }
+.funnel-bar:nth-child(3) { animation-delay: 0.19s; }
+.funnel-bar:nth-child(4) { animation-delay: 0.26s; }
+.funnel-bar:nth-child(5) { animation-delay: 0.33s; }
+
+/* KPI bar animation */
+@keyframes fillBar {
+  from { width: 0; }
+}
+.kpi-bar-fill { animation: fillBar 1s cubic-bezier(0.22, 1, 0.36, 1) both; animation-delay: 0.3s; }
